@@ -1,0 +1,292 @@
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <limits.h>
+
+#define MAX_SYMBOLS 256
+
+typedef struct huff_node {
+    unsigned char symbol;
+    int freq;
+    struct huff_node *left;
+    struct huff_node *right;
+} huff_node;
+
+typedef struct huff_heap {
+    int size;
+    int capacity;
+    huff_node **array;
+} huff_heap;
+
+huff_node *new_node(unsigned char symbol, int freq) {
+    huff_node *node = (huff_node *)malloc(sizeof(huff_node));
+    node->symbol = symbol;
+    node->freq = freq;
+    node->left = NULL;
+    node->right = NULL;
+    return node;
+}
+
+huff_heap *new_heap(int capacity) {
+    huff_heap *heap = (huff_heap *)malloc(sizeof(huff_heap));
+    heap->size = 0;
+    heap->capacity = capacity;
+    heap->array = (huff_node **)malloc(capacity * sizeof(huff_node *));
+    return heap;
+}
+
+void swap_nodes(huff_node **a, huff_node **b) {
+    huff_node *temp = *a;
+    *a = *b;
+    *b = temp;
+}
+
+void heapify(huff_heap *heap, int idx) {
+    int smallest = idx;
+    int left = 2 * idx + 1;
+    int right = 2 * idx + 2;
+    if (left < heap->size && heap->array[left]->freq < heap->array[smallest]->freq)
+        smallest = left;
+    if (right < heap->size && heap->array[right]->freq < heap->array[smallest]->freq)
+        smallest = right;
+    if (smallest != idx) {
+        swap_nodes(&heap->array[idx], &heap->array[smallest]);
+        heapify(heap, smallest);
+    }
+}
+
+int is_leaf(huff_node *node) {
+    return node->left == NULL && node->right == NULL;
+}
+
+huff_node *build_tree(int *freq_table) {
+    huff_heap *heap = new_heap(MAX_SYMBOLS);
+    for (int i = 0; i < MAX_SYMBOLS; i++) {
+        if (freq_table[i] > 0) {
+            huff_node *node = new_node((unsigned char)i, freq_table[i]);
+            heap->array[heap->size++] = node;
+        }
+    }
+    while (heap->size > 1) {
+        huff_node *node1 = heap->array[0];
+        heap->array[0] = heap->array[--heap->size];
+        heapify(heap, 0);
+        huff_node *node2 = heap->array[0];
+        heap->array[0] = new_node(0, node1->freq + node2->freq);
+        heap->array[0]->left = node1;
+        heap->array[0]->right = node2;
+        heapify(heap, 0);
+    }
+    huff_node *root = heap->array[0];
+    free(heap->array);
+    free(heap);
+    return root;
+}
+
+void generate_codes(huff_node *node, char **codes, char *buffer, int depth) {
+    if (node == NULL)
+        return;
+    if (is_leaf(node)) {
+        buffer[depth] = '\0';
+        codes[node->symbol] = strdup(buffer);
+        return;
+    }
+    buffer[depth] = '0';
+    generate_codes(node->left, codes, buffer, depth +1);
+buffer[depth] = '1';
+generate_codes(node->right, codes, buffer, depth + 1);
+}
+
+void compress_file(char *input_filename, char *output_filename) {
+    FILE *input_file = fopen(input_filename, "rb");
+    
+    if (input_file == NULL) {
+    printf("Could not open file '%s' for reading.\n", input_filename);
+        return;
+}
+
+    FILE *output_file = fopen(output_filename, "wb");
+    if (output_file == NULL) {
+        printf("Could not open file '%s' for writing.\n", output_filename);
+    return;
+}
+
+    int freq_table[MAX_SYMBOLS] = {0};
+    int total_bytes = 0;
+    int c;
+
+    while ((c = fgetc(input_file)) != EOF) {
+        freq_table[c]++;
+            total_bytes++;
+}
+
+    huff_node *root = build_tree(freq_table);
+
+    char *codes[MAX_SYMBOLS] = {0};
+    char buffer[CHAR_BIT + 1] = {0};
+
+        generate_codes(root, codes, buffer, 0);
+        fwrite(&total_bytes, sizeof(int), 1, output_file);
+        fwrite(freq_table, sizeof(int), MAX_SYMBOLS, output_file);
+        fseek(input_file, 0, SEEK_SET);
+
+        unsigned char byte = 0;
+    int bit_count = 0;
+        while ((c = fgetc(input_file)) != EOF) {
+    char *code = codes[c];
+        
+        while (*code != '\0') {
+    byte <<= 1;
+
+        if (*code++ == '1')
+    byte |= 1;
+
+    if (++bit_count == CHAR_BIT) {
+
+    fputc(byte, output_file);
+        byte = 0;
+        bit_count = 0;
+        }
+    }
+}
+
+    if (bit_count > 0) {
+        byte <<= (CHAR_BIT - bit_count);
+
+    fputc(byte, output_file);
+}
+
+    fclose(input_file);
+    fclose(output_file);
+}
+
+    huff_node *read_tree(FILE *file) {
+        int c = fgetc(file);
+
+    if (c == EOF || c == '0')
+        return NULL;
+
+    if (c == '1')
+        return new_node(0, 0);
+
+    huff_node *node = new_node(c, 0);
+
+    node->left = read_tree(file);
+    node->right = read_tree(file);
+
+    return node;
+}
+
+void decompress_file(char *input_filename, char *output_filename) {
+
+    FILE *input_file = fopen(input_filename, "rb");
+    
+    if (input_file == NULL) {
+    printf("Could not open file '%s' for reading.\n", input_filename);
+        return;
+
+}
+
+    FILE *output_file = fopen(output_filename, "wb");
+
+    if (output_file == NULL) {
+    printf("Could not open file '%s' for writing.\n", output_filename);
+        return;
+}
+
+int total_bytes;
+    fread(&total_bytes, sizeof(int), 1, input_file);
+
+int freq_table[MAX_SYMBOLS];
+    fread(freq_table, sizeof(int), MAX_SYMBOLS, input_file);
+
+huff_node *root = build_tree(freq_table);
+huff_node *node = root;
+
+int byte_count = 0;
+int bit_count = 0;
+int c;
+
+    while (byte_count < total_bytes) {
+        if (node == NULL)
+    break;
+        
+        if (is_leaf(node)) {
+    
+    fputc(node->symbol, output_file);
+node = root;
+byte_count++;
+
+}
+
+else {
+
+    if (bit_count == CHAR_BIT) {
+c = fgetc(input_file);
+bit_count = 0;
+}
+
+int bit = (c >> (CHAR_BIT - bit_count - 1)) & 1;
+    if (bit == 0)
+node = node->left;
+        else
+node = node->right;
+bit_count++;
+
+    }
+}   
+
+fclose(input_file);
+fclose(output_file);
+
+}
+
+int main() {
+
+char input_filename[256];
+char output_filename[256];
+
+int choice;
+
+printf("Select an operation:\n");
+printf("1. Compress a file.\n");
+printf("2. Decompress a file.\n");
+
+scanf("%d", &choice);
+
+switch (choice) {
+
+case 1:
+printf("Enter the name of the file to compress: ");
+scanf("%s", input_filename);
+
+printf("Enter the name of the compressed output file: ");
+scanf("%s", output_filename);
+
+compress_file(input_filename, output_filename);
+
+break;
+
+case 2:
+printf("Enter the name of the file to decompress: ");
+scanf("%s", input_filename);
+
+printf("Enter the name of the decompressed output file: ");
+scanf("%s", output_filename);
+
+decompress_file(input_filename, output_filename);
+
+break;
+
+default:
+
+printf("Invalid choice.\n");
+
+break;
+
+}
+
+return 0;
+
+}
+
